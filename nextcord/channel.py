@@ -47,6 +47,7 @@ from typing import (
 
 from . import abc, ui, utils
 from .asset import Asset
+from .emoji import Emoji
 from .enums import (
     ChannelType,
     SortOrderType,
@@ -62,6 +63,7 @@ from .iterators import ArchivedThreadIterator
 from .mentions import AllowedMentions
 from .mixins import Hashable, PinsMixin
 from .object import Object
+from .partial_emoji import PartialEmoji
 from .permissions import PermissionOverwrite, Permissions
 from .stage_instance import StageInstance
 from .threads import Thread
@@ -76,6 +78,7 @@ __all__ = (
     "GroupChannel",
     "PartialMessageable",
     "ForumChannel",
+    "ForumTag",
 )
 
 if TYPE_CHECKING:
@@ -91,6 +94,7 @@ if TYPE_CHECKING:
         CategoryChannel as CategoryChannelPayload,
         DMChannel as DMChannelPayload,
         ForumChannel as ForumChannelPayload,
+        ForumTag as ForumTagPayload,
         GroupDMChannel as GroupChannelPayload,
         StageChannel as StageChannelPayload,
         TextChannel as TextChannelPayload,
@@ -930,6 +934,7 @@ class ForumChannel(abc.GuildChannel, Hashable):
         "_type",
         "_overwrites",
         "default_thread_slowmode_delay",
+        "_available_tags",
         "default_reaction",
     )
 
@@ -962,6 +967,9 @@ class ForumChannel(abc.GuildChannel, Hashable):
         self.default_thread_slowmode_delay: Optional[int] = data.get(
             "default_thread_slowmode_delay"
         )
+        self._available_tags: Dict[int, ForumTag] = {
+            int(data["id"]): ForumTag.from_data(tag) for tag in data.get("available_tags", [])
+        }
 
         self.default_reaction: Optional[PartialEmoji]
 
@@ -1029,6 +1037,27 @@ class ForumChannel(abc.GuildChannel, Hashable):
         """
         return self._state._get_message(self.last_message_id) if self.last_message_id else None
 
+    @property
+    def available_tags(self) -> List[ForumTag]:
+        """List[:class:`ForumTag`]: Returns all the tags available in this channel."""
+
+        return list(self._available_tags.values())
+
+    def get_tag(self, id: int, /) -> Optional[ForumTag]:
+        """Returns a tag from this channel by its ID.
+
+        Parameters
+        ----------
+        id: :class:`int`
+
+        Returns
+        -------
+        Optional[:class:`ForumTag`]
+            The tag with the given ID or ``None`` if not found.
+        """
+
+        return self._available_tags.get(id)
+
     @overload
     async def edit(
         self,
@@ -1046,6 +1075,7 @@ class ForumChannel(abc.GuildChannel, Hashable):
         reason: Optional[str] = ...,
         default_sort_order: Optional[SortOrderType] = ...,
         default_thread_slowmode_delay: int = ...,
+        available_tags: List[ForumTag] = ...,
         default_reaction: Optional[Union[Emoji, PartialEmoji, str]] = ...,
     ) -> ForumChannel:
         ...
@@ -1089,6 +1119,10 @@ class ForumChannel(abc.GuildChannel, Hashable):
         default_auto_archive_duration: :class:`int`
             The new default auto archive duration in minutes for threads created in this channel.
             Must be one of ``60``, ``1440``, ``4320``, or ``10080``.
+        flags: :class:`ChannelFlags`
+            The new channel flags.
+
+            .. versionadded:: 2.1
         default_sort_order: :class:`SortOrderType`
             The default sort order type used to sort posts in forum channels.
 
@@ -1097,6 +1131,10 @@ class ForumChannel(abc.GuildChannel, Hashable):
             The new default slowmode delay for threads created in this channel.
             This is not retroactively applied to old posts.
             Must be between ``0`` and ``21600``.
+
+            .. versionadded:: 2.3
+        available_tags: List[:class:`ForumTag`]
+            The new list of tags available in this channel.
 
             .. versionadded:: 2.3
         default_reaction: Optional[Union[:class:`Emoji`, :class:`PartialEmoji`, :class:`str`]]
@@ -1159,6 +1197,7 @@ class ForumChannel(abc.GuildChannel, Hashable):
         mention_author: Optional[bool] = None,
         view: Optional[ui.View] = None,
         reason: Optional[str] = None,
+        applied_tags: Optional[List[ForumTag]] = None,
     ) -> Thread:
         """|coro|
 
@@ -1198,6 +1237,16 @@ class ForumChannel(abc.GuildChannel, Hashable):
             to the object, otherwise it uses the attributes set in :attr:`~nextcord.Client.allowed_mentions`.
             If no object is passed at all then the defaults given by :attr:`~nextcord.Client.allowed_mentions`
             are used instead.
+        mention_author: Optional[:class:`bool`]
+            Whether to mention the author of the message being replied to. Defaults to ``True``.
+        view: Optional[:class:`~nextcord.ui.View`]
+            The view to send with the message.
+        stickers: Optional[Sequence[Union[:class:`~nextcord.GuildSticker`, :class:`~nextcord.StickerItem`]]]
+            A list of stickers to send with the message.
+        applied_tags: Optional[List[:class:`ForumTag`]]
+            A list of tags to apply to the thread.
+
+            .. versionadded:: 2.3
 
         Raises
         ------
@@ -1257,6 +1306,11 @@ class ForumChannel(abc.GuildChannel, Hashable):
         if file is not None:
             files = [file]
 
+        if applied_tags is not None:
+            applied_tag_ids = [str(tag.id) for tag in applied_tags if tag.id is not None]
+        else:
+            applied_tag_ids = []
+
         if files is not None:
             if not all(isinstance(file, File) for file in files):
                 raise TypeError("Files parameter must be a list of type File")
@@ -1275,6 +1329,7 @@ class ForumChannel(abc.GuildChannel, Hashable):
                     allowed_mentions=raw_allowed_mentions,
                     stickers=raw_stickers,
                     components=components,  # type: ignore
+                    applied_tag_ids=applied_tag_ids,
                     reason=reason,
                 )
             finally:
@@ -1292,6 +1347,7 @@ class ForumChannel(abc.GuildChannel, Hashable):
                 allowed_mentions=raw_allowed_mentions,
                 stickers=raw_stickers,
                 components=components,  # type: ignore
+                applied_tag_ids=applied_tag_ids,
                 reason=reason,
             )
 
@@ -2780,3 +2836,99 @@ def _threaded_guild_channel_factory(channel_type: int):
     if value in (ChannelType.private_thread, ChannelType.public_thread, ChannelType.news_thread):
         return Thread, value
     return cls, value
+
+
+class ForumTag:
+    """Represents a tag in a forum channel that can be used to filter posts.
+
+    .. versionadded:: 2.3
+
+    Attributes
+    ----------
+    id: :class:`int`
+        The ID of the tag.
+    name: :class:`str`
+        The name of the tag.
+    moderated: :class:`bool`
+        Whether this tag can only be added to or removed from threads
+        by a member with the :attr:`~Permissions.manage_threads` permission.
+    emoji: Optional[:class:`PartialEmoji`]
+        The emoji that represents this tag.
+
+    Parameters
+    ----------
+    id: :class:`int`
+        The ID of the tag.
+
+        .. warning::
+
+            This should not *really* be passed when constructing this manually.
+
+            This is only documented here for the sake of completeness.
+    name: :class:`str`
+        The name of the tag.
+    moderated: :class:`bool`
+        Whether this tag can only be added to or removed from threads
+        by a member with the :attr:`~Permissions.manage_threads` permission.
+    emoji: Optional[:class:`PartialEmoji`]
+        The emoji that represents this tag.
+    """
+
+    __slots__ = ("id", "name", "moderated", "emoji")
+
+    def __init__(
+        self,
+        *,
+        id: Optional[int] = None,
+        name: str,
+        moderated: bool = False,
+        emoji: Union[PartialEmoji, Emoji, str, None] = None,
+    ) -> None:
+        self.id: Optional[int] = id
+        self.name: str = name
+        self.moderated: bool = moderated
+
+        if isinstance(emoji, Emoji):
+            partial = emoji._to_partial()
+        elif isinstance(emoji, str):
+            partial = PartialEmoji.from_str(emoji)
+        else:
+            partial = emoji
+
+        self.emoji: Optional[PartialEmoji] = partial
+
+    @classmethod
+    def from_data(cls, data: ForumTagPayload) -> ForumTag:
+        return cls(
+            id=int(data["id"]) if data["id"] is not None else None,
+            name=data["name"],
+            moderated=data["moderated"],
+            emoji=PartialEmoji.from_reaction(data),
+        )
+
+    def __repr__(self) -> str:
+        attrs = (
+            ("id", self.id),
+            ("name", self.name),
+            ("moderated", self.moderated),
+            ("emoji", self.emoji),
+        )
+
+        inner = " ".join("%s=%r" % t for t in attrs)
+        return f"{type(self).__name__} {inner}"
+
+    @property
+    def payload(self) -> ForumTagPayload:
+        data: ForumTagPayload = {
+            "id": str(self.id) if self.id is not None else None,
+            "name": self.name,
+            "moderated": self.moderated,
+        }
+
+        if self.emoji is not None:
+            if self.emoji.id is not None:
+                data["emoji_id"] = str(self.emoji.id)
+            else:
+                data["emoji_name"] = self.emoji.name
+
+        return data

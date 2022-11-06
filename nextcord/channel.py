@@ -907,6 +907,10 @@ class ForumChannel(abc.GuildChannel, Hashable):
         This is set on every new thread in this channel.
 
         .. versionadded:: 2.3
+    default_reaction: Optional[:class:`PartialEmoji`]
+        The emoji that is used to add a reaction to every post in this forum.
+
+        .. versionadded:: 2.3
     """
 
     __slots__ = (
@@ -926,6 +930,7 @@ class ForumChannel(abc.GuildChannel, Hashable):
         "_type",
         "_overwrites",
         "default_thread_slowmode_delay",
+        "default_reaction",
     )
 
     def __init__(self, *, state: ConnectionState, guild: Guild, data: ForumChannelPayload):
@@ -957,6 +962,14 @@ class ForumChannel(abc.GuildChannel, Hashable):
         self.default_thread_slowmode_delay: Optional[int] = data.get(
             "default_thread_slowmode_delay"
         )
+
+        self.default_reaction: Optional[PartialEmoji]
+
+        reaction = data.get("default_reaction_emoji")
+        if reaction is not None:
+            self.default_reaction = PartialEmoji.from_reaction(reaction)
+        else:
+            self.default_reaction = None
 
         self._fill_overwrites(data)
 
@@ -1033,6 +1046,7 @@ class ForumChannel(abc.GuildChannel, Hashable):
         reason: Optional[str] = ...,
         default_sort_order: Optional[SortOrderType] = ...,
         default_thread_slowmode_delay: int = ...,
+        default_reaction: Optional[Union[Emoji, PartialEmoji, str]] = ...,
     ) -> ForumChannel:
         ...
 
@@ -1083,6 +1097,10 @@ class ForumChannel(abc.GuildChannel, Hashable):
             The new default slowmode delay for threads created in this channel.
             This is not retroactively applied to old posts.
             Must be between ``0`` and ``21600``.
+
+            .. versionadded:: 2.3
+        default_reaction: Optional[Union[:class:`Emoji`, :class:`PartialEmoji`, :class:`str`]]
+            The new default reaction for threads created in this channel.
 
             .. versionadded:: 2.3
 
